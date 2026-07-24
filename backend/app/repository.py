@@ -10,7 +10,7 @@ from pypdf import PdfReader
 from sqlalchemy import case, desc, func, or_
 from sqlalchemy.orm import Session, joinedload
 
-from . import models, schemas
+from . import auth, models, schemas
 
 
 def _employee_name(employee: models.Employee | None) -> str:
@@ -173,6 +173,7 @@ def employee_to_dict(employee: models.Employee) -> dict[str, Any]:
         "telefono_secundario": employee.telefono_secundario,
         "estado": employee.estado,
         "pct_desempeno": employee.pct_desempeno,
+        "salario_mensual": employee.salario_mensual,
         "fecha_ingreso": personal.fecha_ingreso if personal else None,
         "puesto": personal.puesto if personal else None,
         "observaciones": personal.observaciones if personal else None,
@@ -431,6 +432,7 @@ def absence_to_dict(record: models.Absence) -> dict[str, Any]:
         "empleado": _employee_name(record.empleado),
         "fecha": record.fecha,
         "motivo": record.motivo,
+        "justificada": record.justificada,
     }
 
 
@@ -491,6 +493,67 @@ def movement_to_dict(record: models.Movement) -> dict[str, Any]:
         "depto_nuevo": record.depto_nuevo,
         "motivo": record.motivo,
     }
+
+
+def _month_range(anio: int | None, mes: int | None) -> tuple[date, date] | None:
+    if mes is not None and anio is None:
+        raise ValueError("Debe indicar el año junto con el mes.")
+    if anio is None:
+        return None
+    if mes is not None:
+        if not 1 <= mes <= 12:
+            raise ValueError("El mes debe estar entre 1 y 12.")
+        start = date(anio, mes, 1)
+        end = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+        return start, end
+    return date(anio, 1, 1), date(anio + 1, 1, 1)
+
+
+def list_attendance(
+    db: Session,
+    codigo_empresa: str | None = None,
+    department_id: int | None = None,
+    anio: int | None = None,
+    mes: int | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    date_range = _month_range(anio, mes)
+    query = db.query(models.Attendance).options(joinedload(models.Attendance.empleado))
+    if codigo_empresa:
+        query = query.filter(models.Attendance.codigo_empresa == codigo_empresa)
+    if department_id:
+        query = query.join(
+            models.Personnel, models.Personnel.codigo_empresa == models.Attendance.codigo_empresa
+        ).filter(models.Personnel.id_departamento == department_id)
+    if date_range:
+        query = query.filter(models.Attendance.fecha >= date_range[0], models.Attendance.fecha < date_range[1])
+    rows = query.order_by(desc(models.Attendance.fecha)).limit(limit).all()
+    return [attendance_to_dict(row) for row in rows]
+
+
+def list_absences(
+    db: Session,
+    codigo_empresa: str | None = None,
+    department_id: int | None = None,
+    anio: int | None = None,
+    mes: int | None = None,
+    justificada: bool | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    date_range = _month_range(anio, mes)
+    query = db.query(models.Absence).options(joinedload(models.Absence.empleado))
+    if codigo_empresa:
+        query = query.filter(models.Absence.codigo_empresa == codigo_empresa)
+    if department_id:
+        query = query.join(
+            models.Personnel, models.Personnel.codigo_empresa == models.Absence.codigo_empresa
+        ).filter(models.Personnel.id_departamento == department_id)
+    if date_range:
+        query = query.filter(models.Absence.fecha >= date_range[0], models.Absence.fecha < date_range[1])
+    if justificada is not None:
+        query = query.filter(models.Absence.justificada.is_(justificada))
+    rows = query.order_by(desc(models.Absence.fecha)).limit(limit).all()
+    return [absence_to_dict(row) for row in rows]
 
 
 def recent_records(db: Session) -> dict[str, Any]:
@@ -937,3 +1000,315 @@ def analyze_cv(
     updated = pd.concat([current, pd.DataFrame([record])], ignore_index=True)
     updated.to_csv(report_path, index=False)
     return record
+
+
+# --------------------------------------------------------------------------
+# Autenticacion y usuarios
+# --------------------------------------------------------------------------
+
+class AuthError(ValueError):
+    """Error de autenticación (credenciales invalidas, correo duplicado, etc.)."""
+
+
+def user_to_dict(user: "models.User") -> dict[str, Any]:
+    return {
+        "id_usuario": user.id_usuario,
+        "correo": user.correo,
+        "nombre": user.nombre,
+        "rol": user.rol,
+        "codigo_empresa": user.codigo_empresa,
+        "activo": user.activo,
+    }
+
+
+def authenticate(db: Session, correo: str, password: str) -> models.User:
+    normalized = correo.strip().lower()
+    user = db.query(models.User).filter(models.User.correo == normalized).first()
+    if not user or not user.activo or not auth.verify_password(password, user.password_hash):
+        raise AuthError("Correo o contraseña incorrectos.")
+    user.token_actual = auth.generate_token()
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def logout(db: Session, user: models.User) -> None:
+    user.token_actual = None
+    db.commit()
+
+
+def get_user_by_token(db: Session, token: str | None) -> models.User | None:
+    if not token:
+        return None
+    return (
+        db.query(models.User)
+        .filter(models.User.token_actual == token, models.User.activo.is_(True))
+        .first()
+    )
+
+
+def list_users(db: Session) -> list[dict[str, Any]]:
+    return [user_to_dict(u) for u in db.query(models.User).order_by(models.User.correo).all()]
+
+
+def create_user(db: Session, payload: "schemas.UserCreate") -> dict[str, Any]:
+    normalized = payload.correo.strip().lower()
+    if db.query(models.User).filter(models.User.correo == normalized).first():
+        raise AuthError("Ya existe un usuario con ese correo.")
+    if payload.codigo_empresa:
+        _require_employee(db, payload.codigo_empresa)
+    user = models.User(
+        correo=normalized,
+        password_hash=auth.hash_password(payload.password),
+        nombre=payload.nombre,
+        rol=payload.rol,
+        codigo_empresa=payload.codigo_empresa,
+        activo=True,
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user_to_dict(user)
+
+
+def delete_user(db: Session, user_id: int) -> dict[str, Any]:
+    user = db.query(models.User).filter(models.User.id_usuario == user_id).first()
+    if not user:
+        raise AuthError("El usuario indicado no existe.")
+    user.activo = False
+    user.token_actual = None
+    db.commit()
+    return {"status": "ok"}
+
+
+# --------------------------------------------------------------------------
+# Costo de vacaciones (otorgar vs. no otorgar)
+# --------------------------------------------------------------------------
+
+# Supuestos usados para el calculo (documentados tambien en la respuesta de
+# la API para que se puedan explicar en la presentacion):
+# - factor_prestaciones: recargo estimado por cargas sociales/prestaciones
+#   laborales sobre el salario base al calcular el costo de dar vacaciones.
+# - factor_riesgo_no_otorgar: estimado de productividad perdida / riesgo de
+#   rotacion, como porcentaje del salario mensual, para colaboradores activos
+#   que no registran vacaciones en el periodo analizado.
+VACATION_FACTOR_PRESTACIONES = 1.3
+VACATION_FACTOR_RIESGO_NO_OTORGAR = 0.15
+
+
+def simulate_vacation_cost(db: Session, codigo_empresa: str, dias: int) -> dict[str, Any]:
+    employee = _require_employee(db, codigo_empresa)
+    salario = employee.salario_mensual or 0
+    salario_diario = round(salario / 30, 2)
+    costo_total = round(salario_diario * dias * VACATION_FACTOR_PRESTACIONES, 2)
+    return {
+        "codigo_empresa": employee.codigo_empresa,
+        "nombre": _employee_name(employee),
+        "salario_mensual": salario,
+        "salario_diario": salario_diario,
+        "dias_simulados": dias,
+        "factor_prestaciones": VACATION_FACTOR_PRESTACIONES,
+        "costo_total": costo_total,
+        "nota": (
+            "Simulación: si se otorgan estos días de vacaciones a este colaborador, "
+            "este sería el costo directo estimado (salario diario x días x factor de prestaciones)."
+        ),
+    }
+
+
+def vacation_cost_summary(
+    db: Session,
+    department_id: int | None = None,
+    anio: int | None = None,
+    mes: int | None = None,
+    semestre: int | None = None,
+) -> dict[str, Any]:
+    if mes is not None and semestre is not None:
+        raise ValueError("Indique solo mes o solo semestre, no ambos.")
+    if mes is not None and anio is None:
+        raise ValueError("Debe indicar el año junto con el mes.")
+    if semestre is not None and anio is None:
+        raise ValueError("Debe indicar el año junto con el semestre.")
+
+    date_range = None
+    if anio is not None:
+        if mes is not None:
+            if not 1 <= mes <= 12:
+                raise ValueError("El mes debe estar entre 1 y 12.")
+            start = date(anio, mes, 1)
+            end = date(anio + 1, 1, 1) if mes == 12 else date(anio, mes + 1, 1)
+        elif semestre is not None:
+            if semestre not in (1, 2):
+                raise ValueError("El semestre debe ser 1 o 2.")
+            start = date(anio, 1, 1) if semestre == 1 else date(anio, 7, 1)
+            end = date(anio, 7, 1) if semestre == 1 else date(anio + 1, 1, 1)
+        else:
+            start, end = date(anio, 1, 1), date(anio + 1, 1, 1)
+        date_range = (start, end)
+
+    vac_query = (
+        db.query(models.Vacation, models.Employee, models.Personnel)
+        .join(models.Employee, models.Employee.codigo_empresa == models.Vacation.codigo_empresa)
+        .join(models.Personnel, models.Personnel.codigo_empresa == models.Employee.codigo_empresa)
+    )
+    if department_id:
+        vac_query = vac_query.filter(models.Personnel.id_departamento == department_id)
+    if date_range:
+        vac_query = vac_query.filter(
+            models.Vacation.fecha_inicio < date_range[1], models.Vacation.fecha_fin >= date_range[0]
+        )
+
+    by_department_cost: dict[str, dict[str, Any]] = {}
+    total_dias = 0
+    total_costo_otorgadas = 0.0
+    employees_with_vacation: set[str] = set()
+
+    for vac, emp, personal in vac_query.all():
+        salario = emp.salario_mensual or 0
+        salario_diario = salario / 30
+        costo = round(salario_diario * vac.dias_tomados * VACATION_FACTOR_PRESTACIONES, 2)
+        dep_name = personal.departamento.nombre_departamento if personal.departamento else "Sin departamento"
+        entry = by_department_cost.setdefault(dep_name, {"dias": 0, "costo": 0.0, "colaboradores": set()})
+        entry["dias"] += vac.dias_tomados
+        entry["costo"] += costo
+        entry["colaboradores"].add(emp.codigo_empresa)
+        total_dias += vac.dias_tomados
+        total_costo_otorgadas += costo
+        employees_with_vacation.add(emp.codigo_empresa)
+
+    active_query = (
+        db.query(models.Employee, models.Personnel)
+        .join(models.Personnel, models.Personnel.codigo_empresa == models.Employee.codigo_empresa)
+        .filter(models.Employee.estado == "activo")
+    )
+    if department_id:
+        active_query = active_query.filter(models.Personnel.id_departamento == department_id)
+
+    no_vacation_by_department: dict[str, dict[str, Any]] = {}
+    total_costo_no_otorgadas = 0.0
+    total_sin_vacaciones = 0
+
+    for emp, personal in active_query.all():
+        if emp.codigo_empresa in employees_with_vacation:
+            continue
+        salario = emp.salario_mensual or 0
+        costo = round(salario * VACATION_FACTOR_RIESGO_NO_OTORGAR, 2)
+        dep_name = personal.departamento.nombre_departamento if personal.departamento else "Sin departamento"
+        entry = no_vacation_by_department.setdefault(dep_name, {"colaboradores": 0, "costo": 0.0})
+        entry["colaboradores"] += 1
+        entry["costo"] += costo
+        total_costo_no_otorgadas += costo
+        total_sin_vacaciones += 1
+
+    return {
+        "supuestos": {
+            "factor_prestaciones": VACATION_FACTOR_PRESTACIONES,
+            "factor_riesgo_no_otorgar": VACATION_FACTOR_RIESGO_NO_OTORGAR,
+            "nota": (
+                "Costo de otorgar = salario diario x dias tomados x factor de prestaciones "
+                "(cargas sociales estimadas). Costo de no otorgar = estimacion de productividad "
+                "perdida / riesgo de rotacion para colaboradores activos sin vacaciones "
+                "registradas en el periodo, como % de su salario mensual. Son supuestos "
+                "razonables para fines de analisis gerencial, no cifras contables exactas."
+            ),
+        },
+        "periodo": {"anio": anio, "mes": mes, "semestre": semestre},
+        "resumen": {
+            "total_dias_otorgados": total_dias,
+            "total_costo_otorgadas": round(total_costo_otorgadas, 2),
+            "colaboradores_con_vacaciones": len(employees_with_vacation),
+            "colaboradores_sin_vacaciones": total_sin_vacaciones,
+            "total_costo_no_otorgadas": round(total_costo_no_otorgadas, 2),
+        },
+        "otorgadas_por_departamento": [
+            {
+                "departamento": name,
+                "dias": data["dias"],
+                "costo": round(data["costo"], 2),
+                "colaboradores": len(data["colaboradores"]),
+            }
+            for name, data in sorted(by_department_cost.items())
+        ],
+        "no_otorgadas_por_departamento": [
+            {"departamento": name, "colaboradores": data["colaboradores"], "costo": round(data["costo"], 2)}
+            for name, data in sorted(no_vacation_by_department.items())
+        ],
+    }
+
+
+# --------------------------------------------------------------------------
+# Solicitudes entre departamentos (quien pide que documento a quien, y si
+# esta pendiente o completada).
+# --------------------------------------------------------------------------
+
+def department_request_to_dict(row: models.DepartmentRequest) -> dict[str, Any]:
+    return {
+        "id_solicitud": row.id_solicitud,
+        "id_departamento_origen": row.id_departamento_origen,
+        "departamento_origen": row.departamento_origen.nombre_departamento if row.departamento_origen else None,
+        "id_departamento_destino": row.id_departamento_destino,
+        "departamento_destino": row.departamento_destino.nombre_departamento if row.departamento_destino else None,
+        "documento": row.documento,
+        "fecha_solicitud": row.fecha_solicitud,
+        "estado": row.estado,
+        "observaciones": row.observaciones,
+        "fecha_completado": row.fecha_completado,
+    }
+
+
+def list_department_requests(
+    db: Session,
+    department_id: int | None = None,
+    estado: str | None = None,
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    query = db.query(models.DepartmentRequest).options(
+        joinedload(models.DepartmentRequest.departamento_origen),
+        joinedload(models.DepartmentRequest.departamento_destino),
+    )
+    if department_id:
+        query = query.filter(
+            or_(
+                models.DepartmentRequest.id_departamento_origen == department_id,
+                models.DepartmentRequest.id_departamento_destino == department_id,
+            )
+        )
+    if estado:
+        query = query.filter(models.DepartmentRequest.estado == estado)
+    rows = query.order_by(desc(models.DepartmentRequest.fecha_solicitud)).limit(limit).all()
+    return [department_request_to_dict(row) for row in rows]
+
+
+def create_department_request(db: Session, payload: schemas.DepartmentRequestCreate) -> dict[str, Any]:
+    _require_department(db, payload.id_departamento_origen)
+    _require_department(db, payload.id_departamento_destino)
+    request = models.DepartmentRequest(
+        id_departamento_origen=payload.id_departamento_origen,
+        id_departamento_destino=payload.id_departamento_destino,
+        documento=payload.documento,
+        fecha_solicitud=payload.fecha_solicitud,
+        observaciones=payload.observaciones,
+        estado="pendiente",
+    )
+    db.add(request)
+    db.commit()
+    db.refresh(request)
+    return department_request_to_dict(request)
+
+
+def update_department_request(
+    db: Session, request_id: int, payload: schemas.DepartmentRequestUpdate
+) -> dict[str, Any]:
+    request = (
+        db.query(models.DepartmentRequest)
+        .filter(models.DepartmentRequest.id_solicitud == request_id)
+        .first()
+    )
+    if not request:
+        raise ValueError("La solicitud indicada no existe.")
+    request.estado = payload.estado
+    request.observaciones = payload.observaciones if payload.observaciones is not None else request.observaciones
+    request.fecha_completado = date.today() if payload.estado == "completada" else None
+    db.commit()
+    db.refresh(request)
+    return department_request_to_dict(request)

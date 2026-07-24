@@ -1638,6 +1638,13 @@ select:focus {
   gap: 12px;
 }
 
+.report-export-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
 .table-wrap {
   width: 100%;
   overflow: auto;
@@ -2028,5 +2035,106 @@ tr:last-child td {
 
   .panel {
     break-inside: avoid;
+  }
+}
+
+/* Login */
+.login-shell {
+  min-height: 70vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 16px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  box-shadow: var(--shadow-md);
+  padding: 32px;
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.login-brand strong {
+  display: block;
+  font-size: 18px;
+}
+
+.login-brand span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.login-form .primary-button {
+  justify-content: center;
+  margin-top: 6px;
+}
+
+.login-demo {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px dashed var(--line);
+}
+
+.login-demo > span {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.login-demo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.login-demo-list .ghost-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+}
+
+.login-demo-list .ghost-button span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.user-badge {
+  text-transform: none;
+}
+
+.sidebar-logout {
+  margin: 0 16px 16px;
+  justify-content: center;
+}
+
+.vacation-cost-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .vacation-cost-grid {
+    grid-template-columns: 1fr;
   }
 }

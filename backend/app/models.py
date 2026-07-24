@@ -39,6 +39,7 @@ class Employee(Base):
     telefono_secundario = Column(String(20))
     estado = Column(String(20), nullable=False, default="activo")
     pct_desempeno = Column(Float)
+    salario_mensual = Column(Float, nullable=True)
 
     personal = relationship("Personnel", back_populates="empleado", uselist=False)
     asistencias = relationship("Attendance", back_populates="empleado")
@@ -84,6 +85,7 @@ class Absence(Base):
     codigo_empresa = Column(String(5), ForeignKey("empleados.codigo_empresa"), nullable=False)
     fecha = Column(Date, nullable=False)
     motivo = Column(String(255))
+    justificada = Column(Boolean, nullable=False, default=True)
 
     empleado = relationship("Employee", back_populates="ausencias")
 
@@ -150,3 +152,35 @@ class Movement(Base):
     motivo = Column(String(255))
 
     empleado = relationship("Employee", back_populates="movimientos")
+
+
+class DepartmentRequest(Base):
+    __tablename__ = "solicitudes_departamento"
+
+    id_solicitud = Column(Integer, primary_key=True, index=True)
+    id_departamento_origen = Column(Integer, ForeignKey("departamentos.id_departamento"), nullable=False)
+    id_departamento_destino = Column(Integer, ForeignKey("departamentos.id_departamento"), nullable=False)
+    documento = Column(String(255), nullable=False)
+    fecha_solicitud = Column(Date, nullable=False)
+    estado = Column(String(20), nullable=False, default="pendiente")
+    observaciones = Column(String(500))
+    fecha_completado = Column(Date, nullable=True)
+
+    departamento_origen = relationship("Department", foreign_keys=[id_departamento_origen])
+    departamento_destino = relationship("Department", foreign_keys=[id_departamento_destino])
+
+
+class User(Base):
+    __tablename__ = "usuarios"
+
+    id_usuario = Column(Integer, primary_key=True, index=True)
+    correo = Column(String(150), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    nombre = Column(String(150), nullable=False)
+    # admin | gerencia_rrhh | usuario
+    rol = Column(String(20), nullable=False, default="usuario")
+    # Sin ForeignKey estricta a proposito: permite regenerar datos demo de
+    # empleados sin romper la tabla de usuarios.
+    codigo_empresa = Column(String(5), nullable=True)
+    activo = Column(Boolean, nullable=False, default=True)
+    token_actual = Column(String(64), nullable=True, index=True)

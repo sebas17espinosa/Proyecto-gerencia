@@ -16,12 +16,14 @@ import {
   Database,
   FileDown,
   FileSearch,
+  FileSpreadsheet,
   Filter,
   Handshake,
   HelpCircle,
   Home,
   Layers3,
   LayoutDashboard,
+  LogIn,
   LogOut,
   MonitorCheck,
   Moon,
@@ -31,6 +33,7 @@ import {
   Settings2,
   ShieldCheck,
   Sun,
+  Trash2,
   UserCheck,
   UserRoundCog,
   UsersRound,
@@ -46,7 +49,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { api } from "./api";
+import { api, getToken, setToken } from "./api";
 import {
   DataTable,
   EmptyState,
@@ -104,16 +107,28 @@ const mainTabs = [
 ];
 
 const moduleTabs = [
-  { id: "overview", label: "Resumen", icon: PieChartIcon },
-  { id: "recruitment", label: "Reclutamiento", icon: FileSearch },
-  { id: "employees", label: "Personal", icon: UsersRound },
-  { id: "daily", label: "Control diario", icon: CalendarCheck },
-  { id: "development", label: "Desarrollo", icon: Brain },
-  { id: "exit", label: "Salida", icon: LogOut },
-  { id: "reports", label: "Reportes", icon: BarChart3 },
+  { id: "overview", label: "Resumen", icon: PieChartIcon, roles: ["admin", "gerencia_rrhh"] },
+  { id: "recruitment", label: "Reclutamiento", icon: FileSearch, roles: ["admin", "gerencia_rrhh"] },
+  { id: "employees", label: "Personal", icon: UsersRound, roles: ["admin", "gerencia_rrhh"] },
+  { id: "daily", label: "Control diario", icon: CalendarCheck, roles: ["admin", "gerencia_rrhh"] },
+  { id: "development", label: "Desarrollo", icon: Brain, roles: ["admin", "gerencia_rrhh"] },
+  { id: "exit", label: "Salida", icon: LogOut, roles: ["admin", "gerencia_rrhh"] },
+  { id: "reports", label: "Reportes", icon: BarChart3, roles: ["admin", "gerencia_rrhh"] },
+  { id: "users", label: "Usuarios", icon: ShieldCheck, roles: ["admin"] },
 ];
 
+const ROLE_LABELS = {
+  admin: "Administrador",
+  gerencia_rrhh: "Gerencia de RR. HH.",
+  usuario: "Colaborador",
+};
+
 const productModules = [
+  {
+    title: "Control de acceso",
+    text: "Inicio de sesión con roles: administrador, gerencia de RR. HH. y colaborador, cada uno con su propia vista y permisos.",
+    icon: ShieldCheck,
+  },
   {
     title: "Reclutamiento",
     text: "Vacantes abiertas, recepción de CV, filtro por palabras clave y reporte de candidatos.",
@@ -121,12 +136,12 @@ const productModules = [
   },
   {
     title: "Personal",
-    text: "Expediente único del colaborador con ingreso, puesto, departamento, estado y desempeño.",
+    text: "Expediente único del colaborador con ingreso, puesto, departamento, salario, estado y desempeño, más el registro de peticiones entre departamentos.",
     icon: UsersRound,
   },
   {
     title: "Control diario",
-    text: "Marcado web de asistencia por colaborador, con fecha, presente/ausente, ausencias y vacaciones.",
+    text: "Marcado web de asistencia con fecha y estado, ausencias justificadas o injustificadas, vacaciones, e historial filtrable por mes y departamento.",
     icon: CalendarCheck,
   },
   {
@@ -141,9 +156,19 @@ const productModules = [
   },
   {
     title: "Reportes",
-    text: "Indicadores para gerencia sobre plantilla, asistencia, rotación, desempeño y departamentos.",
+    text: "Indicadores gerenciales, exportación a PDF/Excel por departamento o colaborador, y costo de otorgar vs. no otorgar vacaciones.",
     icon: BarChart3,
   },
+];
+
+const MANUAL_STEPS = [
+  ["Control de acceso", "Inicio de sesión por rol: administrador (gestiona usuarios y todo el sistema), gerencia de RR. HH. (opera todos los módulos) y colaborador (portal personal para consultar su información y marcar su propia asistencia/ausencia)."],
+  ["Reclutamiento", "Revisar vacantes abiertas, cargar CVs, aplicar filtro por palabras clave y consultar candidatos."],
+  ["Personal", "Registrar un colaborador con su salario, asignar un departamento, consultar la plantilla por estado o área, y registrar peticiones de documentos entre departamentos con seguimiento de pendiente/completado."],
+  ["Control diario", "Marcar asistencia desde formulario web con fecha y estado; registrar ausencias como justificadas o injustificadas; y consultar el historial filtrado por mes, año y departamento."],
+  ["Desarrollo", "Seleccionar un colaborador, registrar una capacitación o evaluación y ver su porcentaje de desempeño."],
+  ["Salida", "Registrar movimiento interno o salida definitiva con fecha, motivo y observaciones."],
+  ["Reportes", "Consultar KPIs y gráficas, exportar reportes en PDF o Excel por departamento/colaborador/periodo, y calcular el costo de otorgar o no otorgar vacaciones."],
 ];
 
 const pricingTiers = [
@@ -151,10 +176,11 @@ const pricingTiers = [
     name: "Básico",
     price: "B/. 49",
     cadence: "mensual",
-    description: "Para equipos pequeños que necesitan ordenar expedientes y asistencia.",
+    description: "Para equipos pequeños que necesitan ordenar expedientes y asistencia con un solo usuario administrador.",
     features: [
       "Hasta 75 colaboradores",
       "Personal y control diario",
+      "1 usuario administrador (sin roles múltiples)",
       "Dashboard básico",
       "Reporte imprimible mensual",
     ],
@@ -163,13 +189,15 @@ const pricingTiers = [
     name: "Personal",
     price: "B/. 129",
     cadence: "mensual",
-    description: "Para empresas en crecimiento que necesitan operar todo el ciclo de RR. HH.",
+    description: "Para empresas en crecimiento que necesitan operar todo el ciclo de RR. HH. con varios usuarios.",
     featured: true,
     features: [
       "Hasta 300 colaboradores",
       "Reclutamiento, desarrollo y salida",
-      "Vista de administrador y empleado",
-      "Filtros por fecha, estado y departamento",
+      "Control de acceso: administrador, gerencia RR. HH. y colaborador",
+      "Portal de autoservicio para el colaborador",
+      "Ausencias justificadas/injustificadas y filtros por mes",
+      "Peticiones entre departamentos con seguimiento",
     ],
   },
   {
@@ -180,6 +208,8 @@ const pricingTiers = [
     features: [
       "Colaboradores ilimitados según alcance",
       "Integración con MySQL y sistemas internos",
+      "Exportación de reportes en PDF y Excel sin límite",
+      "Costo de otorgar/no otorgar vacaciones por colaborador y departamento",
       "Marcado QR, biometría o geolocalización",
       "Soporte y reportes a medida",
     ],
@@ -255,6 +285,38 @@ function App() {
   const refresh = () => setRefreshKey((value) => value + 1);
   const isDarkTheme = theme === "dark";
 
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const token = getToken();
+    if (!token) {
+      setAuthChecked(true);
+      return;
+    }
+    api
+      .getMe()
+      .then((current) => setUser(current))
+      .catch(() => setToken(""))
+      .finally(() => setAuthChecked(true));
+  }, []);
+
+  function handleLoggedIn(loggedUser) {
+    setUser(loggedUser);
+    setActiveModule(loggedUser.rol === "usuario" ? "overview" : "overview");
+  }
+
+  async function handleLogout() {
+    try {
+      await api.logout();
+    } catch {
+      // El token ya pudo haber expirado del lado del servidor; se limpia igual.
+    }
+    setToken("");
+    setUser(null);
+    setActivePage("home");
+  }
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("talento-theme", theme);
@@ -266,9 +328,13 @@ function App() {
       home: <HomePage {...props} />,
       solution: <SolutionPage {...props} />,
       pricing: <PricingPage {...props} />,
-      dashboard: <DashboardWorkspace {...props} />,
+      dashboard: user ? (
+        <DashboardWorkspace {...props} user={user} onLogout={handleLogout} />
+      ) : (
+        <LoginPage onLoggedIn={handleLoggedIn} loading={!authChecked} />
+      ),
     }[activePage];
-  }, [activePage, activeModule, refreshKey]);
+  }, [activePage, activeModule, refreshKey, user, authChecked]);
 
   return (
     <div className="product-shell">
@@ -296,10 +362,17 @@ function App() {
           })}
         </nav>
         <div className="topbar-actions">
-          <div className="topbar-badge">
-            <Database size={16} />
-            Demo con 300 colaboradores
-          </div>
+          {user ? (
+            <div className="topbar-badge user-badge">
+              <UserCheck size={16} />
+              {user.nombre} · {ROLE_LABELS[user.rol] || user.rol}
+            </div>
+          ) : (
+            <div className="topbar-badge">
+              <Database size={16} />
+              Demo con 300 colaboradores
+            </div>
+          )}
           <button
             className="theme-toggle"
             type="button"
@@ -310,6 +383,12 @@ function App() {
             {isDarkTheme ? <Sun size={18} /> : <Moon size={18} />}
             <span>{isDarkTheme ? "Claro" : "Nocturno"}</span>
           </button>
+          {user && (
+            <button className="theme-toggle" type="button" onClick={handleLogout} title="Cerrar sesión">
+              <LogOut size={18} />
+              <span>Salir</span>
+            </button>
+          )}
         </div>
       </header>
       <main className="content">{page}</main>
@@ -349,7 +428,7 @@ function HomePage({ setActivePage }) {
             </button>
           </div>
           <div className="hero-proof">
-            <span><CheckCircle2 size={16} /> 6 módulos conectados</span>
+            <span><CheckCircle2 size={16} /> 7 módulos conectados con control de acceso por rol</span>
             <span><CheckCircle2 size={16} /> Data demo con 300 colaboradores</span>
             <span><CheckCircle2 size={16} /> API FastAPI en ejecución</span>
           </div>
@@ -415,6 +494,7 @@ function HomePage({ setActivePage }) {
             ["Menos datos dispersos", "Une colaboradores, asistencia, desarrollo y reportes en un flujo claro.", Database],
             ["Gestión por módulo", "Cada pantalla explica su propósito y ofrece acciones concretas para operar.", Layers3],
             ["Lectura gerencial", "El dashboard resume plantilla, departamentos, rotación y desempeño.", MonitorCheck],
+            ["Control de acceso por rol", "Administrador, gerencia de RR. HH. y colaborador ven solo lo que les corresponde.", ShieldCheck],
           ].map(([title, text, Icon]) => (
             <article className="feature-card" key={title}>
               <div className="feature-icon"><Icon size={22} /></div>
@@ -494,10 +574,13 @@ function HomePage({ setActivePage }) {
 
 function SolutionPage({ setActivePage }) {
   const faqs = [
-    ["¿Qué tipo de asistencia utiliza?", "La demostración usa marcado web por formulario: colaborador, fecha y estado. En producción puede ampliarse a QR, biometría o geolocalización."],
+    ["¿Quién puede entrar al sistema?", "Hay control de acceso con 3 roles: administrador (gestiona usuarios y todo el sistema), gerencia de RR. HH. (opera todos los módulos) y colaborador (portal personal limitado a su propia información)."],
+    ["¿Qué tipo de asistencia utiliza?", "La demostración usa marcado web por formulario: colaborador, fecha y estado, con ausencias justificadas o injustificadas. En producción puede ampliarse a QR, biometría o geolocalización."],
     ["¿Los datos son reales?", "Son datos de demostración generados para presentar el sistema con volumen suficiente sin exponer información sensible."],
-    ["¿Qué vende Talento 360?", "Vende orden, trazabilidad y reportes ejecutivos para mejorar la gestión de Recursos Humanos."],
-    ["¿El dashboard es general o por usuario?", "Incluye KPI generales y evaluación individual por colaborador en el módulo de Desarrollo."],
+    ["¿Qué vende Talento 360?", "Vende orden, trazabilidad y reportes ejecutivos para mejorar la gestión de Recursos Humanos, con la información necesaria para tomar decisiones gerenciales."],
+    ["¿El dashboard es general o por usuario?", "Incluye KPI generales y evaluación individual por colaborador en el módulo de Desarrollo, además del portal personal del colaborador."],
+    ["¿Puedo exportar información para gerencia?", "Sí, los reportes se pueden descargar en PDF o Excel filtrados por departamento, colaborador individual, año, mes o semestre."],
+    ["¿Cómo ayuda a decidir sobre vacaciones?", "El sistema calcula el costo de otorgar vacaciones y un estimado del costo de no otorgarlas, tanto a nivel general como para un colaborador específico."],
   ];
 
   return (
@@ -522,9 +605,9 @@ function SolutionPage({ setActivePage }) {
           </div>
         </div>
         <div className="solution-summary">
-          <div><strong>6</strong><span>módulos funcionales</span></div>
+          <div><strong>{productModules.length}</strong><span>módulos funcionales</span></div>
           <div><strong>300</strong><span>colaboradores demo</span></div>
-          <div><strong>1</strong><span>dashboard gerencial</span></div>
+          <div><strong>3</strong><span>roles de acceso</span></div>
         </div>
       </section>
       <section className="module-guide">
@@ -639,14 +722,7 @@ function PricingPage({ setActivePage }) {
 }
 
 function ManualSteps() {
-  const steps = [
-    ["Reclutamiento", "Revisar vacantes abiertas, cargar CVs, aplicar filtro por palabras clave y consultar candidatos."],
-    ["Personal", "Registrar un colaborador, asignar un departamento y consultar la plantilla por estado o área."],
-    ["Control diario", "Marcar asistencia desde formulario web. Registra fecha, colaborador y presente/ausente; ausencias incluyen motivo."],
-    ["Desarrollo", "Seleccionar un colaborador, registrar una capacitación o evaluación y ver su porcentaje de desempeño."],
-    ["Salida", "Registrar movimiento interno o salida definitiva con fecha, motivo y observaciones."],
-    ["Reportes", "Consultar KPI, gráficas y datos consolidados para tomar decisiones."],
-  ];
+  const steps = MANUAL_STEPS;
 
   return (
     <section className="manual-list">
@@ -663,10 +739,104 @@ function ManualSteps() {
   );
 }
 
-function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule }) {
-  const [workspaceMode, setWorkspaceMode] = useState("admin");
-  const [selectedEmployee, setSelectedEmployee] = useState("");
-  const options = useAsync(api.getEmployeeOptions, [refreshKey]);
+const DEMO_ACCOUNTS = [
+  { correo: "admin@talento360.com", password: "admin123", rol: "Administrador" },
+  { correo: "rrhh@talento360.com", password: "rrhh123", rol: "Gerencia de RR. HH." },
+  { correo: "empleado@talento360.com", password: "empleado123", rol: "Colaborador" },
+];
+
+function LoginPage({ onLoggedIn, loading }) {
+  const [correo, setCorreo] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api.login(correo, password);
+      setToken(result.access_token);
+      onLoggedIn(result.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function useDemo(account) {
+    setCorreo(account.correo);
+    setPassword(account.password);
+  }
+
+  if (loading) return <LoadingScreen />;
+
+  return (
+    <div className="login-shell">
+      <div className="login-card">
+        <div className="login-brand">
+          <div className="brand-mark">T360</div>
+          <div>
+            <strong>Talento 360</strong>
+            <span>Acceso al panel administrativo</span>
+          </div>
+        </div>
+        <form className="login-form" onSubmit={submit}>
+          <Notice type="error">{error}</Notice>
+          <Field label="Correo">
+            <input
+              type="email"
+              required
+              autoComplete="username"
+              value={correo}
+              onChange={(event) => setCorreo(event.target.value)}
+              placeholder="nombre@talento360.com"
+            />
+          </Field>
+          <Field label="Contraseña">
+            <input
+              type="password"
+              required
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="••••••••"
+            />
+          </Field>
+          <button className="primary-button" type="submit" disabled={busy}>
+            {busy ? <RefreshCw size={16} className="spin" /> : <LogIn size={16} />}
+            {busy ? "Ingresando..." : "Ingresar"}
+          </button>
+        </form>
+        <div className="login-demo">
+          <span>Cuentas demo (clic para autocompletar)</span>
+          <div className="login-demo-list">
+            {DEMO_ACCOUNTS.map((account) => (
+              <button
+                key={account.correo}
+                type="button"
+                className="ghost-button"
+                onClick={() => useDemo(account)}
+              >
+                <strong>{account.rol}</strong>
+                <span>{account.correo}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule, user, onLogout }) {
+  const isSelfService = user.rol === "usuario";
+  const [workspaceMode, setWorkspaceMode] = useState(isSelfService ? "employee" : "admin");
+  const [selectedEmployee, setSelectedEmployee] = useState(isSelfService ? user.codigo_empresa : "");
+  const options = useAsync(isSelfService ? () => Promise.resolve([]) : api.getEmployeeOptions, [refreshKey]);
+  const visibleTabs = moduleTabs.filter((item) => item.roles.includes(user.rol));
   const modulePages = {
     overview: <DashboardPage refreshKey={refreshKey} refresh={refresh} />,
     recruitment: <RecruitmentPage refreshKey={refreshKey} refresh={refresh} />,
@@ -675,15 +845,23 @@ function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule
     development: <DevelopmentPage refreshKey={refreshKey} refresh={refresh} />,
     exit: <ExitPage refreshKey={refreshKey} refresh={refresh} />,
     reports: <ReportsPage refreshKey={refreshKey} refresh={refresh} />,
+    users: <UsersPage refreshKey={refreshKey} refresh={refresh} />,
   };
-  const isEmployeeMode = workspaceMode === "employee";
+  const isEmployeeMode = isSelfService || workspaceMode === "employee";
 
   useEffect(() => {
+    if (isSelfService) return;
     const first = options.data?.[0]?.codigo_empresa;
     if (first) {
       setSelectedEmployee((current) => current || first);
     }
-  }, [options.data]);
+  }, [options.data, isSelfService]);
+
+  useEffect(() => {
+    if (!isSelfService && !visibleTabs.some((tab) => tab.id === activeModule)) {
+      setActiveModule(visibleTabs[0]?.id || "overview");
+    }
+  }, [isSelfService]);
 
   return (
     <div className={`admin-shell ${isEmployeeMode ? "employee-mode" : ""}`}>
@@ -696,14 +874,20 @@ function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule
           </div>
         </div>
         <nav className="admin-nav" aria-label="Módulos del dashboard">
-          {isEmployeeMode ? (
+          {isSelfService ? (
+            <button className="active" type="button">
+              <CircleUserRound size={18} />
+              <span>Mi portal</span>
+              <ChevronRight size={15} />
+            </button>
+          ) : isEmployeeMode ? (
             <button className="active" type="button">
               <CircleUserRound size={18} />
               <span>Mi portal</span>
               <ChevronRight size={15} />
             </button>
           ) : (
-            moduleTabs.map((item) => {
+            visibleTabs.map((item) => {
               const Icon = item.icon;
               return (
                 <button
@@ -721,40 +905,42 @@ function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule
         </nav>
         <div className="admin-sidebar-card">
           {isEmployeeMode ? <UserCheck size={18} /> : <Settings2 size={18} />}
-          <strong>{isEmployeeMode ? "Vista limitada" : "Demo operativa"}</strong>
-          <span>
-            {isEmployeeMode
-              ? "El colaborador consulta su información sin administrar datos globales."
-              : "FastAPI + React con datos generados para la presentación."}
-          </span>
+          <strong>{user.nombre}</strong>
+          <span>{ROLE_LABELS[user.rol] || user.rol}</span>
         </div>
+        <button className="ghost-button sidebar-logout" type="button" onClick={onLogout}>
+          <LogOut size={16} />
+          Cerrar sesión
+        </button>
       </aside>
       <section className="admin-main">
         <div className="admin-topbar">
           <div>
             <span className="eyebrow">{isEmployeeMode ? "Panel del empleado" : "Panel administrativo"}</span>
-            <strong>{isEmployeeMode ? "Mi información laboral" : moduleTabs.find((item) => item.id === activeModule)?.label || "Dashboard"}</strong>
+            <strong>{isEmployeeMode ? "Mi información laboral" : visibleTabs.find((item) => item.id === activeModule)?.label || "Dashboard"}</strong>
           </div>
           <div className="admin-actions">
-            <div className="view-switch" role="group" aria-label="Cambiar vista">
-              <button
-                className={workspaceMode === "admin" ? "active" : ""}
-                type="button"
-                onClick={() => setWorkspaceMode("admin")}
-              >
-                <UserRoundCog size={16} />
-                Admin
-              </button>
-              <button
-                className={workspaceMode === "employee" ? "active" : ""}
-                type="button"
-                onClick={() => setWorkspaceMode("employee")}
-              >
-                <CircleUserRound size={16} />
-                Empleado
-              </button>
-            </div>
-            {isEmployeeMode ? (
+            {!isSelfService && (
+              <div className="view-switch" role="group" aria-label="Cambiar vista">
+                <button
+                  className={workspaceMode === "admin" ? "active" : ""}
+                  type="button"
+                  onClick={() => setWorkspaceMode("admin")}
+                >
+                  <UserRoundCog size={16} />
+                  Admin
+                </button>
+                <button
+                  className={workspaceMode === "employee" ? "active" : ""}
+                  type="button"
+                  onClick={() => setWorkspaceMode("employee")}
+                >
+                  <CircleUserRound size={16} />
+                  Empleado
+                </button>
+              </div>
+            )}
+            {isEmployeeMode && !isSelfService ? (
               <select
                 className="employee-picker"
                 value={selectedEmployee}
@@ -767,15 +953,20 @@ function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule
                   </option>
                 ))}
               </select>
-            ) : (
+            ) : !isEmployeeMode ? (
               <span><Database size={16} /> 300 colaboradores</span>
-            )}
+            ) : null}
             <button className="ghost-button" onClick={refresh}><RefreshCw size={16} />Actualizar</button>
           </div>
         </div>
         <div className="admin-content">
           {isEmployeeMode ? (
-            <EmployeeWorkspace codigoEmpresa={selectedEmployee} refreshKey={refreshKey} />
+            <EmployeeWorkspace
+              codigoEmpresa={selectedEmployee}
+              refreshKey={refreshKey}
+              refresh={refresh}
+              selfService={isSelfService}
+            />
           ) : (
             modulePages[activeModule]
           )}
@@ -785,7 +976,7 @@ function DashboardWorkspace({ refreshKey, refresh, activeModule, setActiveModule
   );
 }
 
-function EmployeeWorkspace({ codigoEmpresa, refreshKey }) {
+function EmployeeWorkspace({ codigoEmpresa, refreshKey, refresh, selfService = false }) {
   const { data, loading, error } = useAsync(
     () => codigoEmpresa ? api.getEmployeeWorkspace(codigoEmpresa) : Promise.resolve(null),
     [codigoEmpresa, refreshKey],
@@ -816,6 +1007,9 @@ function EmployeeWorkspace({ codigoEmpresa, refreshKey }) {
         <MetricCard label="Asistencias recientes" value={attendanceCount} detail="Últimos registros presentes" icon={CalendarCheck} tone="green" />
         <MetricCard label="Desempeño actual" value={latestEvaluation ? `${latestEvaluation.pct_neto}%` : "Sin dato"} detail="Evaluación neta" icon={BookOpenCheck} tone="lime" />
       </section>
+      {selfService && (
+        <SelfServicePanel codigoEmpresa={codigoEmpresa} refresh={refresh} />
+      )}
       <section className="split-grid">
         <Panel title="Mi perfil laboral" subtitle="Datos visibles para el colaborador">
           <div className="profile-list">
@@ -868,6 +1062,211 @@ function EmployeeWorkspace({ codigoEmpresa, refreshKey }) {
   );
 }
 
+function SelfServicePanel({ codigoEmpresa, refresh }) {
+  const [presente, setPresente] = useState(true);
+  const [fecha, setFecha] = useState(today);
+  const [motivo, setMotivo] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function markAttendance(event) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      await api.recordAttendance({ codigo_empresa: codigoEmpresa, fecha, presente });
+      setMessage("Asistencia registrada correctamente.");
+      refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitAbsence(event) {
+    event.preventDefault();
+    if (!motivo.trim()) {
+      setError("Indique el motivo de la ausencia.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      await api.recordAbsence({ codigo_empresa: codigoEmpresa, fecha, motivo });
+      setMessage("Ausencia registrada correctamente.");
+      setMotivo("");
+      refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel title="Marcar mi día" subtitle="Registra tu asistencia o reporta una ausencia justificada.">
+      <Notice type="error">{error}</Notice>
+      <Notice type="success">{message}</Notice>
+      <div className="form-grid">
+        <Field label="Fecha">
+          <input type="date" value={fecha} onChange={(event) => setFecha(event.target.value)} />
+        </Field>
+        <Field label="¿Asististe?">
+          <select value={presente ? "si" : "no"} onChange={(event) => setPresente(event.target.value === "si")}>
+            <option value="si">Sí, presente</option>
+            <option value="no">No, ausente</option>
+          </select>
+        </Field>
+      </div>
+      <div className="report-export-actions">
+        <button className="primary-button" type="button" disabled={busy} onClick={markAttendance}>
+          <CheckCircle2 size={16} />
+          Registrar asistencia del día
+        </button>
+      </div>
+      <div className="form-grid" style={{ marginTop: 16 }}>
+        <Field label="Motivo de ausencia (opcional)">
+          <input
+            type="text"
+            value={motivo}
+            onChange={(event) => setMotivo(event.target.value)}
+            placeholder="Ej. Cita médica"
+          />
+        </Field>
+      </div>
+      <div className="report-export-actions">
+        <button className="ghost-button" type="button" disabled={busy} onClick={submitAbsence}>
+          <ClipboardList size={16} />
+          Reportar ausencia
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
+function UsersPage({ refreshKey, refresh }) {
+  const users = useAsync(api.getUsers, [refreshKey]);
+  const employees = useAsync(api.getEmployeeOptions, [refreshKey]);
+  const [form, setForm] = useState({ correo: "", password: "", nombre: "", rol: "gerencia_rrhh", codigo_empresa: "" });
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      const payload = { ...form, codigo_empresa: form.rol === "usuario" ? form.codigo_empresa : null };
+      await api.createUser(payload);
+      setMessage("Usuario creado correctamente.");
+      setForm({ correo: "", password: "", nombre: "", rol: "gerencia_rrhh", codigo_empresa: "" });
+      refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(row) {
+    try {
+      await api.deleteUser(row.id_usuario);
+      refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Control de acceso"
+        title="Usuarios del sistema"
+        description="Solo el administrador puede crear cuentas y asignar roles: administrador, gerencia de RR. HH. o colaborador."
+      />
+      <section className="split-grid">
+        <Panel title="Cuentas activas">
+          <DataTable
+            columns={[
+              { key: "nombre", label: "Nombre" },
+              { key: "correo", label: "Correo" },
+              { key: "rol", label: "Rol", render: (value) => ROLE_LABELS[value] || value },
+              { key: "codigo_empresa", label: "Código", render: (value) => value || "-" },
+              {
+                key: "id_usuario",
+                label: "Acción",
+                render: (_value, row) => (
+                  <button className="ghost-button" type="button" onClick={() => remove(row)}>
+                    <Trash2 size={14} />
+                    Desactivar
+                  </button>
+                ),
+              },
+            ]}
+            rows={users.data || []}
+            emptyText="Aún no hay usuarios registrados."
+          />
+        </Panel>
+        <Panel title="Crear nuevo usuario">
+          <Notice type="error">{error}</Notice>
+          <Notice type="success">{message}</Notice>
+          <FormGrid onSubmit={submit} buttonLabel="Crear usuario" busy={busy}>
+            <Field label="Nombre completo">
+              <input required value={form.nombre} onChange={(event) => setForm({ ...form, nombre: event.target.value })} />
+            </Field>
+            <Field label="Correo">
+              <input
+                type="email"
+                required
+                value={form.correo}
+                onChange={(event) => setForm({ ...form, correo: event.target.value })}
+              />
+            </Field>
+            <Field label="Contraseña">
+              <input
+                type="password"
+                required
+                minLength={6}
+                value={form.password}
+                onChange={(event) => setForm({ ...form, password: event.target.value })}
+              />
+            </Field>
+            <Field label="Rol">
+              <select value={form.rol} onChange={(event) => setForm({ ...form, rol: event.target.value })}>
+                <option value="admin">Administrador</option>
+                <option value="gerencia_rrhh">Gerencia de RR. HH.</option>
+                <option value="usuario">Colaborador</option>
+              </select>
+            </Field>
+            {form.rol === "usuario" && (
+              <Field label="Colaborador ligado">
+                <select
+                  required
+                  value={form.codigo_empresa}
+                  onChange={(event) => setForm({ ...form, codigo_empresa: event.target.value })}
+                >
+                  <option value="">Selecciona un colaborador</option>
+                  {(employees.data || []).map((employee) => (
+                    <option key={employee.codigo_empresa} value={employee.codigo_empresa}>
+                      {employee.codigo_empresa} - {employee.nombre_completo}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            )}
+          </FormGrid>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
 function TeamPage() {
   const roles = [
     ["Líder del proyecto", "Coordina avances, alcance, integración y presentación final."],
@@ -903,14 +1302,7 @@ function TeamPage() {
 }
 
 function ManualPage({ setActivePage }) {
-  const steps = [
-    ["Reclutamiento", "Revisar vacantes abiertas, cargar CVs, aplicar filtro por palabras clave y consultar candidatos."],
-    ["Personal", "Registrar un colaborador, asignar un departamento y consultar la plantilla por estado o área."],
-    ["Control diario", "Marcar asistencia desde formulario web. Registra fecha, colaborador y presente/ausente; ausencias incluyen motivo."],
-    ["Desarrollo", "Seleccionar un colaborador, registrar una capacitación o evaluación y ver su porcentaje de desempeño."],
-    ["Salida", "Registrar movimiento interno o salida definitiva con fecha, motivo y observaciones."],
-    ["Reportes", "Consultar KPI, gráficas y datos consolidados para tomar decisiones."],
-  ];
+  const steps = MANUAL_STEPS;
   return (
     <>
       <PageHeader
@@ -1450,9 +1842,173 @@ function EmployeesPage({ refreshKey, refresh }) {
             { key: "departamento", label: "Departamento" },
             { key: "puesto", label: "Puesto" },
             { key: "estado", label: "Estado", render: (value) => <StatusBadge value={value} /> },
+            { key: "salario_mensual", label: "Salario", render: (value) => value ? `B/. ${formatInteger(value)}` : "-" },
             { key: "pct_desempeno", label: "Desempeño", render: (value) => value ? `${value}%` : "-" },
           ]}
           rows={employees.data || []}
+        />
+      </Panel>
+      <DepartmentRequestsPanel refreshKey={refreshKey} refresh={refresh} />
+    </>
+  );
+}
+
+function DepartmentRequestsPanel({ refreshKey, refresh }) {
+  const departments = useAsync(api.getDepartments, [refreshKey]);
+  const [filterDepartment, setFilterDepartment] = useState("");
+  const [filterEstado, setFilterEstado] = useState("");
+  const requests = useAsync(
+    () => api.getDepartmentRequests({ department_id: filterDepartment, estado: filterEstado }),
+    [refreshKey, filterDepartment, filterEstado],
+  );
+
+  const [form, setForm] = useState({
+    id_departamento_origen: "",
+    id_departamento_destino: "",
+    documento: "",
+    fecha_solicitud: today,
+    observaciones: "",
+  });
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const first = departments.data?.[0]?.id_departamento;
+    const second = departments.data?.[1]?.id_departamento;
+    if (first && second) {
+      setForm((current) => ({
+        ...current,
+        id_departamento_origen: current.id_departamento_origen || first,
+        id_departamento_destino: current.id_departamento_destino || second,
+      }));
+    }
+  }, [departments.data]);
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage("");
+    setError("");
+    try {
+      await api.createDepartmentRequest({
+        ...form,
+        id_departamento_origen: Number(form.id_departamento_origen),
+        id_departamento_destino: Number(form.id_departamento_destino),
+        observaciones: form.observaciones || null,
+      });
+      setMessage("Petición registrada correctamente.");
+      setForm((current) => ({ ...current, documento: "", observaciones: "" }));
+      refresh();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markCompleted(row) {
+    try {
+      await api.updateDepartmentRequest(row.id_solicitud, {
+        estado: "completada",
+        observaciones: row.observaciones,
+      });
+      refresh();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  return (
+    <>
+      <Panel
+        title="Peticiones entre departamentos"
+        subtitle="Registra qué departamento le pide un documento o formulario a otro, y su estado"
+      >
+        <Notice type="error">{error}</Notice>
+        <Notice type="success">{message}</Notice>
+        <FormGrid onSubmit={submit} buttonLabel="Registrar petición" busy={busy}>
+          <Field label="Departamento que solicita">
+            <select
+              value={form.id_departamento_origen}
+              onChange={(event) => setForm({ ...form, id_departamento_origen: event.target.value })}
+            >
+              {(departments.data || []).map((dep) => (
+                <option key={dep.id_departamento} value={dep.id_departamento}>{dep.nombre_departamento}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Departamento destino">
+            <select
+              value={form.id_departamento_destino}
+              onChange={(event) => setForm({ ...form, id_departamento_destino: event.target.value })}
+            >
+              {(departments.data || []).map((dep) => (
+                <option key={dep.id_departamento} value={dep.id_departamento}>{dep.nombre_departamento}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Documento o formulario">
+            <input
+              required
+              value={form.documento}
+              onChange={(event) => setForm({ ...form, documento: event.target.value })}
+              placeholder="Ej. Reporte mensual de nómina"
+            />
+          </Field>
+          <Field label="Fecha de solicitud">
+            <input
+              type="date"
+              value={form.fecha_solicitud}
+              onChange={(event) => setForm({ ...form, fecha_solicitud: event.target.value })}
+            />
+          </Field>
+          <Field label="Observaciones (opcional)">
+            <input
+              value={form.observaciones}
+              onChange={(event) => setForm({ ...form, observaciones: event.target.value })}
+            />
+          </Field>
+        </FormGrid>
+      </Panel>
+      <Panel title="Historial de peticiones" subtitle="Filtra por departamento o estado">
+        <div className="form-grid no-submit">
+          <Field label="Departamento">
+            <select value={filterDepartment} onChange={(event) => setFilterDepartment(event.target.value)}>
+              <option value="">Todos los departamentos</option>
+              {(departments.data || []).map((dep) => (
+                <option key={dep.id_departamento} value={dep.id_departamento}>{dep.nombre_departamento}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Estado">
+            <select value={filterEstado} onChange={(event) => setFilterEstado(event.target.value)}>
+              <option value="">Todos</option>
+              <option value="pendiente">Pendiente</option>
+              <option value="completada">Completada</option>
+            </select>
+          </Field>
+        </div>
+        <DataTable
+          columns={[
+            { key: "fecha_solicitud", label: "Fecha" },
+            { key: "departamento_origen", label: "Solicita" },
+            { key: "departamento_destino", label: "A" },
+            { key: "documento", label: "Documento" },
+            { key: "estado", label: "Estado", render: (value) => <StatusBadge value={value === "completada" ? "Completada" : "Pendiente"} /> },
+            { key: "fecha_completado", label: "Completado el", render: (value) => value || "-" },
+            {
+              key: "acciones",
+              label: "Acción",
+              render: (_value, row) => row.estado === "pendiente" ? (
+                <button className="compact-button" type="button" onClick={() => markCompleted(row)}>
+                  Marcar completada
+                </button>
+              ) : "-",
+            },
+          ]}
+          rows={requests.data || []}
+          emptyText="Aún no hay peticiones registradas."
         />
       </Panel>
     </>
@@ -1461,12 +2017,33 @@ function EmployeesPage({ refreshKey, refresh }) {
 
 function DailyPage({ refreshKey, refresh }) {
   const options = useAsync(api.getEmployeeOptions, [refreshKey]);
-  const recent = useAsync(api.getRecentRecords, [refreshKey]);
+  const departments = useAsync(api.getDepartments, [refreshKey]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [attendance, setAttendance] = useState({ codigo_empresa: "", fecha: today, presente: true });
-  const [absence, setAbsence] = useState({ codigo_empresa: "", fecha: today, motivo: "Cita médica" });
+  const [absence, setAbsence] = useState({ codigo_empresa: "", fecha: today, motivo: "Cita médica", justificada: true });
   const [vacation, setVacation] = useState({ codigo_empresa: "", fecha_inicio: today, fecha_fin: today, observaciones: "Vacaciones aprobadas" });
+
+  const [historyView, setHistoryView] = useState("asistencia");
+  const [historyYear, setHistoryYear] = useState(String(currentYear));
+  const [historyMonth, setHistoryMonth] = useState(String(new Date().getMonth() + 1));
+  const [historyDepartment, setHistoryDepartment] = useState("");
+  const [historyJustificada, setHistoryJustificada] = useState("");
+
+  const attendanceHistory = useAsync(
+    () => api.getAttendance({ anio: historyYear, mes: historyMonth, department_id: historyDepartment, limit: 300 }),
+    [refreshKey, historyYear, historyMonth, historyDepartment, historyView],
+  );
+  const absenceHistory = useAsync(
+    () => api.getAbsences({
+      anio: historyYear,
+      mes: historyMonth,
+      department_id: historyDepartment,
+      justificada: historyJustificada,
+      limit: 300,
+    }),
+    [refreshKey, historyYear, historyMonth, historyDepartment, historyJustificada, historyView],
+  );
 
   useEffect(() => {
     const first = options.data?.[0]?.codigo_empresa;
@@ -1524,6 +2101,15 @@ function DailyPage({ refreshKey, refresh }) {
             <EmployeeSelect value={absence.codigo_empresa} options={options.data} onChange={(value) => setAbsence({ ...absence, codigo_empresa: value })} />
             <Field label="Fecha"><input type="date" value={absence.fecha} onChange={(e) => setAbsence({ ...absence, fecha: e.target.value })} /></Field>
             <Field label="Motivo"><input value={absence.motivo} onChange={(e) => setAbsence({ ...absence, motivo: e.target.value })} /></Field>
+            <Field label="¿Es justificada?">
+              <select
+                value={String(absence.justificada)}
+                onChange={(e) => setAbsence({ ...absence, justificada: e.target.value === "true" })}
+              >
+                <option value="true">Justificada</option>
+                <option value="false">Injustificada</option>
+              </select>
+            </Field>
           </FormGrid>
         </Panel>
         <Panel title="Vacaciones">
@@ -1535,16 +2121,73 @@ function DailyPage({ refreshKey, refresh }) {
           </FormGrid>
         </Panel>
       </section>
-      <Panel title="Registros recientes" subtitle="Últimos movimientos de control diario">
-        <DataTable
-          columns={[
-            { key: "codigo_empresa", label: "Código" },
-            { key: "empleado", label: "Empleado" },
-            { key: "fecha", label: "Fecha" },
-            { key: "presente", label: "Estado", render: (value) => <StatusBadge value={value ? "Presente" : "Ausente"} /> },
-          ]}
-          rows={recent.data?.asistencias || []}
-        />
+      <Panel
+        title="Historial filtrado por mes"
+        subtitle="Consulta asistencia o ausencias de un mes y departamento específico"
+      >
+        <div className="form-grid no-submit">
+          <Field label="Vista">
+            <select value={historyView} onChange={(event) => setHistoryView(event.target.value)}>
+              <option value="asistencia">Asistencia</option>
+              <option value="ausencias">Ausencias</option>
+            </select>
+          </Field>
+          <Field label="Año">
+            <select value={historyYear} onChange={(event) => setHistoryYear(event.target.value)}>
+              {REPORT_YEARS.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Mes">
+            <select value={historyMonth} onChange={(event) => setHistoryMonth(event.target.value)}>
+              {Array.from({ length: 12 }, (_, index) => index + 1).map((value) => (
+                <option key={value} value={value}>{String(value).padStart(2, "0")}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Departamento">
+            <select value={historyDepartment} onChange={(event) => setHistoryDepartment(event.target.value)}>
+              <option value="">Todos los departamentos</option>
+              {(departments.data || []).map((dept) => (
+                <option key={dept.id_departamento} value={dept.id_departamento}>{dept.nombre_departamento}</option>
+              ))}
+            </select>
+          </Field>
+          {historyView === "ausencias" && (
+            <Field label="Condición">
+              <select value={historyJustificada} onChange={(event) => setHistoryJustificada(event.target.value)}>
+                <option value="">Todas</option>
+                <option value="true">Justificadas</option>
+                <option value="false">Injustificadas</option>
+              </select>
+            </Field>
+          )}
+        </div>
+        {historyView === "asistencia" ? (
+          <DataTable
+            columns={[
+              { key: "codigo_empresa", label: "Código" },
+              { key: "empleado", label: "Empleado" },
+              { key: "fecha", label: "Fecha" },
+              { key: "presente", label: "Estado", render: (value) => <StatusBadge value={value ? "Presente" : "Ausente"} /> },
+            ]}
+            rows={attendanceHistory.data || []}
+            emptyText="No hay registros de asistencia para ese periodo."
+          />
+        ) : (
+          <DataTable
+            columns={[
+              { key: "codigo_empresa", label: "Código" },
+              { key: "empleado", label: "Empleado" },
+              { key: "fecha", label: "Fecha" },
+              { key: "motivo", label: "Motivo" },
+              { key: "justificada", label: "Condición", render: (value) => <StatusBadge value={value ? "Justificada" : "Injustificada"} /> },
+            ]}
+            rows={absenceHistory.data || []}
+            emptyText="No hay ausencias para ese periodo."
+          />
+        )}
       </Panel>
     </>
   );
@@ -1791,6 +2434,9 @@ function ReportsPage({ refreshKey, refresh }) {
         <MetricCard label="Capacitaciones" value={data.summary.capacitaciones} icon={Brain} tone="green" />
         <MetricCard label="Ausencias" value={data.summary.ausencias} icon={ClipboardList} tone="cyan" />
       </section>
+      <ReportExportPanel refreshKey={refreshKey} />
+      <VacationCostPanel refreshKey={refreshKey} />
+      <IndividualVacationCalculator refreshKey={refreshKey} />
       <section className="dashboard-grid">
         <Panel title="Salidas por mes">
           <ResponsiveContainer width="100%" height={300}>
@@ -1849,6 +2495,346 @@ function PrintReportButton() {
       <Printer size={16} />
       Imprimir PDF
     </button>
+  );
+}
+
+const currentYear = new Date().getFullYear();
+const REPORT_YEARS = [currentYear, currentYear - 1, currentYear - 2];
+
+function ReportExportPanel({ refreshKey }) {
+  const modules = useAsync(api.getReportModules, []);
+  const departments = useAsync(api.getDepartments, [refreshKey]);
+  const employees = useAsync(api.getEmployeeOptions, [refreshKey]);
+
+  const [modulo, setModulo] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [codigoEmpresa, setCodigoEmpresa] = useState("");
+  const [periodType, setPeriodType] = useState("todo");
+  const [anio, setAnio] = useState(String(currentYear));
+  const [mes, setMes] = useState("1");
+  const [semestre, setSemestre] = useState("1");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    const first = modules.data?.[0]?.id;
+    if (first && !modulo) setModulo(first);
+  }, [modules.data]);
+
+  async function download(formato) {
+    if (!modulo) return;
+    setBusy(formato);
+    setError("");
+    setMessage("");
+    const params = {
+      modulo,
+      formato,
+      department_id: departmentId || undefined,
+      codigo_empresa: codigoEmpresa || undefined,
+    };
+    if (periodType === "anio") params.anio = anio;
+    if (periodType === "mes") {
+      params.anio = anio;
+      params.mes = mes;
+    }
+    if (periodType === "semestre") {
+      params.anio = anio;
+      params.semestre = semestre;
+    }
+    try {
+      await api.exportReport(params);
+      setMessage("Reporte generado. La descarga debió iniciar automáticamente.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <Panel
+      title="Generar reporte descargable"
+      subtitle="PDF o Excel por departamento, por colaborador y por periodo, para cualquier módulo del sistema."
+    >
+      <Notice type="error">{error}</Notice>
+      <Notice type="success">{message}</Notice>
+      <div className="form-grid no-submit">
+        <Field label="Módulo">
+          <select value={modulo} onChange={(event) => setModulo(event.target.value)}>
+            {(modules.data || []).map((item) => (
+              <option key={item.id} value={item.id}>{item.label}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Departamento">
+          <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}>
+            <option value="">Todos los departamentos</option>
+            {(departments.data || []).map((dept) => (
+              <option key={dept.id_departamento} value={dept.id_departamento}>{dept.nombre_departamento}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Colaborador">
+          <select value={codigoEmpresa} onChange={(event) => setCodigoEmpresa(event.target.value)}>
+            <option value="">Todos los colaboradores</option>
+            {(employees.data || []).map((employee) => (
+              <option key={employee.codigo_empresa} value={employee.codigo_empresa}>
+                {employee.codigo_empresa} - {employee.nombre_completo}
+              </option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Periodo">
+          <select value={periodType} onChange={(event) => setPeriodType(event.target.value)}>
+            <option value="todo">Todo el histórico</option>
+            <option value="anio">Año</option>
+            <option value="semestre">Semestre</option>
+            <option value="mes">Mes</option>
+          </select>
+        </Field>
+        {periodType !== "todo" && (
+          <Field label="Año">
+            <select value={anio} onChange={(event) => setAnio(event.target.value)}>
+              {REPORT_YEARS.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {periodType === "mes" && (
+          <Field label="Mes">
+            <select value={mes} onChange={(event) => setMes(event.target.value)}>
+              {Array.from({ length: 12 }, (_, index) => index + 1).map((value) => (
+                <option key={value} value={value}>{String(value).padStart(2, "0")}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {periodType === "semestre" && (
+          <Field label="Semestre">
+            <select value={semestre} onChange={(event) => setSemestre(event.target.value)}>
+              <option value="1">Semestre 1 (ene - jun)</option>
+              <option value="2">Semestre 2 (jul - dic)</option>
+            </select>
+          </Field>
+        )}
+      </div>
+      <div className="report-export-actions">
+        <button
+          className="primary-button"
+          type="button"
+          disabled={busy !== "" || !modulo}
+          onClick={() => download("excel")}
+        >
+          <FileSpreadsheet size={16} />
+          {busy === "excel" ? "Generando..." : "Descargar Excel"}
+        </button>
+        <button
+          className="ghost-button"
+          type="button"
+          disabled={busy !== "" || !modulo}
+          onClick={() => download("pdf")}
+        >
+          <FileDown size={16} />
+          {busy === "pdf" ? "Generando..." : "Descargar PDF"}
+        </button>
+      </div>
+    </Panel>
+  );
+}
+
+function VacationCostPanel({ refreshKey }) {
+  const departments = useAsync(api.getDepartments, [refreshKey]);
+  const [departmentId, setDepartmentId] = useState("");
+  const [periodType, setPeriodType] = useState("todo");
+  const [anio, setAnio] = useState(String(currentYear));
+  const [semestre, setSemestre] = useState("1");
+
+  const params = { department_id: departmentId };
+  if (periodType === "anio") params.anio = anio;
+  if (periodType === "semestre") {
+    params.anio = anio;
+    params.semestre = semestre;
+  }
+
+  const { data, loading, error } = useAsync(
+    () => api.getVacationCost(params),
+    [refreshKey, departmentId, periodType, anio, semestre],
+  );
+
+  return (
+    <Panel
+      title="Costo de otorgar vs. no otorgar vacaciones"
+      subtitle="Estimación gerencial para decidir sobre políticas de vacaciones"
+    >
+      <div className="form-grid no-submit">
+        <Field label="Departamento">
+          <select value={departmentId} onChange={(event) => setDepartmentId(event.target.value)}>
+            <option value="">Todos los departamentos</option>
+            {(departments.data || []).map((dept) => (
+              <option key={dept.id_departamento} value={dept.id_departamento}>{dept.nombre_departamento}</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Periodo">
+          <select value={periodType} onChange={(event) => setPeriodType(event.target.value)}>
+            <option value="todo">Todo el histórico</option>
+            <option value="anio">Año</option>
+            <option value="semestre">Semestre</option>
+          </select>
+        </Field>
+        {periodType !== "todo" && (
+          <Field label="Año">
+            <select value={anio} onChange={(event) => setAnio(event.target.value)}>
+              {REPORT_YEARS.map((year) => (
+                <option key={year} value={year}>{year}</option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {periodType === "semestre" && (
+          <Field label="Semestre">
+            <select value={semestre} onChange={(event) => setSemestre(event.target.value)}>
+              <option value="1">Semestre 1 (ene - jun)</option>
+              <option value="2">Semestre 2 (jul - dic)</option>
+            </select>
+          </Field>
+        )}
+      </div>
+
+      {loading ? (
+        <LoadingScreen />
+      ) : error ? (
+        <ErrorScreen error={error} />
+      ) : (
+        <>
+          <section className="metric-grid four">
+            <MetricCard
+              label="Costo de vacaciones otorgadas"
+              value={`B/. ${formatInteger(data.resumen.total_costo_otorgadas)}`}
+              detail={`${formatInteger(data.resumen.total_dias_otorgados)} días entre ${formatInteger(data.resumen.colaboradores_con_vacaciones)} colaboradores`}
+              icon={BadgeDollarSign}
+              tone="green"
+            />
+            <MetricCard
+              label="Costo estimado de NO otorgar"
+              value={`B/. ${formatInteger(data.resumen.total_costo_no_otorgadas)}`}
+              detail={`${formatInteger(data.resumen.colaboradores_sin_vacaciones)} colaboradores sin vacaciones en el periodo`}
+              icon={Activity}
+              tone="lime"
+            />
+            <MetricCard
+              label="Factor de prestaciones"
+              value={`x${data.supuestos.factor_prestaciones}`}
+              detail="Aplicado sobre salario diario x días tomados"
+              icon={BriefcaseBusiness}
+              tone="cyan"
+            />
+            <MetricCard
+              label="Factor de riesgo sin vacaciones"
+              value={`${Math.round(data.supuestos.factor_riesgo_no_otorgar * 100)}%`}
+              detail="Del salario mensual, como estimado"
+              icon={UserCheck}
+            />
+          </section>
+          <p className="soft-text">{data.supuestos.nota}</p>
+          <div className="vacation-cost-grid">
+            <div>
+              <h4>Costo de vacaciones otorgadas por departamento</h4>
+              <DataTable
+                columns={[
+                  { key: "departamento", label: "Departamento" },
+                  { key: "colaboradores", label: "Colaboradores" },
+                  { key: "dias", label: "Días" },
+                  { key: "costo", label: "Costo", render: (value) => `B/. ${formatInteger(value)}` },
+                ]}
+                rows={data.otorgadas_por_departamento}
+                emptyText="No hay vacaciones registradas para este filtro."
+              />
+            </div>
+            <div>
+              <h4>Costo estimado de no otorgar por departamento</h4>
+              <DataTable
+                columns={[
+                  { key: "departamento", label: "Departamento" },
+                  { key: "colaboradores", label: "Colaboradores sin vacaciones" },
+                  { key: "costo", label: "Costo estimado", render: (value) => `B/. ${formatInteger(value)}` },
+                ]}
+                rows={data.no_otorgadas_por_departamento}
+                emptyText="Todos los colaboradores activos tienen vacaciones registradas en este filtro."
+              />
+            </div>
+          </div>
+        </>
+      )}
+    </Panel>
+  );
+}
+
+function IndividualVacationCalculator({ refreshKey }) {
+  const options = useAsync(api.getEmployeeOptions, [refreshKey]);
+  const [codigoEmpresa, setCodigoEmpresa] = useState("");
+  const [dias, setDias] = useState(10);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const first = options.data?.[0]?.codigo_empresa;
+    if (first) setCodigoEmpresa((current) => current || first);
+  }, [options.data]);
+
+  async function calculate(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    setResult(null);
+    try {
+      const data = await api.simulateVacationCost({ codigo_empresa: codigoEmpresa, dias });
+      setResult(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Panel
+      title="Calculadora individual de vacaciones"
+      subtitle="Simula el costo de otorgar X días de vacaciones a un colaborador específico"
+    >
+      <Notice type="error">{error}</Notice>
+      <form className="form-grid no-submit" onSubmit={calculate}>
+        <EmployeeSelect value={codigoEmpresa} options={options.data} onChange={setCodigoEmpresa} />
+        <Field label="Días de vacaciones a otorgar">
+          <input
+            type="number"
+            min={1}
+            max={60}
+            value={dias}
+            onChange={(event) => setDias(Number(event.target.value))}
+          />
+        </Field>
+      </form>
+      <div className="report-export-actions">
+        <button className="primary-button" type="button" disabled={busy || !codigoEmpresa} onClick={calculate}>
+          <BadgeDollarSign size={16} />
+          {busy ? "Calculando..." : "Calcular costo"}
+        </button>
+      </div>
+      {result && (
+        <div className="score-card" style={{ marginTop: 16 }}>
+          <span>{result.nombre} ({result.codigo_empresa})</span>
+          <strong>B/. {formatInteger(result.costo_total)}</strong>
+          <small>
+            Salario mensual B/. {formatInteger(result.salario_mensual)} · Salario diario B/. {formatInteger(result.salario_diario)} ·
+            {" "}{result.dias_simulados} días · factor de prestaciones x{result.factor_prestaciones}
+          </small>
+        </div>
+      )}
+    </Panel>
   );
 }
 
